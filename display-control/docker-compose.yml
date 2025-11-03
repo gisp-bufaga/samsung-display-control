@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  app:
+    # ... configurazione esistente ...
+    environment:
+      # ... env esistenti ...
+      - DASHBOARD_URL=${DASHBOARD_URL}
+      - DEVICE_ID=${DEVICE_ID}
+      - DASHBOARD_API_KEY=${DASHBOARD_API_KEY}
+      - ENABLE_DASHBOARD_AGENT=${ENABLE_DASHBOARD_AGENT:-false}
+    
+  # NUOVO: Agent separato
+  dashboard-agent:
+    build: .
+    command: python agent.py
+    environment:
+      - DASHBOARD_URL=${DASHBOARD_URL}
+      - DEVICE_ID=${DEVICE_ID}
+      - DASHBOARD_API_KEY=${DASHBOARD_API_KEY}
+    restart: unless-stopped
+    network_mode: "host"  # Per accesso Tailscale
+    depends_on:
+      - app
