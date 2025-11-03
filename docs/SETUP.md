@@ -171,3 +171,172 @@ python src\display_system.py
 ```
 
 Dovresti vedere:
+
+======================================================================
+🖥️  DISPLAY CONTROL SYSTEM
+Display: Il Mio Display (192.168.1.100)
+...
+Server starting on: http://0.0.0.0:5000
+
+======================================================================
+
+### 2. Accedi alla Dashboard
+
+Apri browser e vai a: `http://localhost:5000`
+
+- Username: `admin`
+- Password: `admin123`
+
+### 3. Test Comandi
+
+Nella dashboard:
+1. Click su "🔄 Refresh Status" - verifica connessione
+2. Click su "🟢 Power ON" - testa accensione
+3. Verifica che il display risponda
+
+### 4. Ferma il Server
+
+Premi `Ctrl+C` nella finestra Command Prompt.
+
+---
+
+## ⚙️ Configurazione Avanzata
+
+### Avvio Automatico
+
+**Opzione A: Task Scheduler**
+```cmd
+scripts\windows\install_service.bat
+```
+
+Richiede privilegi amministratore.
+
+**Opzione B: Script di Startup**
+
+1. Crea shortcut di `scripts\windows\start.bat`
+2. Premi `Win+R`, digita `shell:startup`
+3. Incolla lo shortcut nella cartella
+
+### Cambio Password
+```cmd
+scripts\windows\update_password.bat
+```
+
+Oppure manualmente:
+```python
+python
+>>> import hashlib
+>>> hashlib.sha256("tua_nuova_password".encode()).hexdigest()
+```
+
+Copia l'hash in `config\config.json` → `security.password_hash`
+
+### Configurazione Schedule
+
+Modifica in `config\config.json`:
+```json
+"schedule": {
+  "enabled": true,
+  "power_on": "08:00",
+  "power_off": "20:00",
+  "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+  "source_on_startup": "hdmi1"
+}
+```
+
+### Notifiche Telegram
+
+1. Crea bot con [@BotFather](https://t.me/BotFather)
+2. Ottieni token e chat_id
+3. Configura in `config.json`:
+```json
+"telegram": {
+  "enabled": true,
+  "bot_token": "123456:ABC-DEF...",
+  "chat_id": "123456789"
+}
+```
+
+---
+
+## 📱 Accesso Mobile
+
+### Android
+
+1. Installa [Tailscale](https://play.google.com/store/apps/details?id=com.tailscale.ipn)
+2. Login con stesso account
+3. Apri Chrome: `http://100.64.1.5:5000`
+4. Login: `admin` / `tua_password`
+5. Menu → "Aggiungi a schermata Home"
+
+### iOS
+
+1. Installa [Tailscale](https://apps.apple.com/app/tailscale/id1470499037)
+2. Login con stesso account
+3. Safari: `http://100.64.1.5:5000`
+4. Login: `admin` / `tua_password`
+5. Condividi → "Aggiungi a Home"
+
+---
+
+## ✅ Verifica Installazione
+
+### Checklist
+
+- [ ] Python installato e funzionante
+- [ ] Tailscale connesso (IP ottenuto)
+- [ ] Display risponde a ping
+- [ ] Server si avvia senza errori
+- [ ] Dashboard accessibile localmente
+- [ ] Comando Power ON/OFF funziona
+- [ ] Dashboard accessibile via Tailscale
+- [ ] Accesso da mobile OK
+- [ ] Password cambiata
+
+### Test Finale
+```cmd
+scripts\windows\check_system.bat
+```
+
+Tutti i check dovrebbero essere OK.
+
+---
+
+## 🆘 Problemi Comuni
+
+### Python non trovato
+
+Reinstalla Python spuntando "Add to PATH".
+
+### Display non risponde
+```cmd
+# Verifica IP corretto
+ping 192.168.1.100
+
+# Verifica MDC abilitato sul display
+```
+
+### Port 5000 occupata
+```cmd
+netstat -ano | findstr :5000
+taskkill /F /PID [numero_pid]
+```
+
+### Tailscale non connette
+```cmd
+net stop Tailscale
+net start Tailscale
+```
+
+---
+
+## 📚 Prossimi Passi
+
+- Leggi [CONFIGURATION.md](CONFIGURATION.md) per configurazione dettagliata
+- Consulta [API.md](API.md) per integrazioni
+- Vedi [TROUBLESHOOTING.md](TROUBLESHOOTING.md) per problemi
+
+---
+
+**Setup completato! 🎉**
+
