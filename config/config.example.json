@@ -1,0 +1,45 @@
+{
+  "display": {
+    "ip": "192.168.1.100",
+    "name": "Display Principale",
+    "location": "Negozio Roma"
+  },
+  "schedule": {
+    "enabled": true,
+    "power_on": "08:00",
+    "power_off": "20:00",
+    "days": [
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday"
+    ],
+    "source_on_startup": "hdmi1"
+  },
+  "watchdog": {
+    "enabled": true,
+    "check_interval": 300,
+    "max_retry": 3
+  },
+  "notifications": {
+    "telegram": {
+      "enabled": false,
+      "bot_token": "YOUR_BOT_TOKEN_HERE",
+      "chat_id": "YOUR_CHAT_ID_HERE"
+    },
+    "email": {
+      "enabled": false,
+      "smtp_server": "smtp.gmail.com",
+      "smtp_port": 587,
+      "username": "your_email@gmail.com",
+      "password": "your_app_password_here",
+      "to_email": "recipient@email.com"
+    }
+  },
+  "security": {
+    "username": "admin",
+    "password_hash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9"
+  }
+}
