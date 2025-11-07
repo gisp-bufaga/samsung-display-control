@@ -17,7 +17,7 @@ echo ======================================
 echo   STEP 1/6: Python Check
 echo ======================================
 echo.
-py --version >nul 2>&1
+python --version >nul 2>&1
 if %errorlevel%==0 (
     echo Python found:
     python --version
@@ -76,7 +76,7 @@ echo.
 echo Installing Python packages...
 echo This may take a few minutes...
 echo.
-pip install flask flask-socketio samsung-mdc schedule requests python-socketio psutil
+python -m pip install flask flask-socketio samsung-mdc schedule requests python-socketio psutil
 echo.
 echo [OK] Dependencies installed
 echo.
