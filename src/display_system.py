@@ -24,12 +24,33 @@ import schedule
 import os
 import subprocess
 import psutil
+import asyncio
+
 
 try:
     from samsung_mdc import MDC
 except ImportError:
     print("ERRORE: Installa samsung-mdc con: pip install samsung-mdc")
     exit(1)
+
+async def mdc_command(ip, display_id, command, *args):
+    """Esegue un comando MDC asincrono."""
+    try:
+        async with MDC(ip, verbose=True) as mdc:
+            if command == "power_on":
+                await mdc.power(display_id, [MDC.power.POWER_STATE.ON])
+            elif command == "power_off":
+                await mdc.power(display_id, [MDC.power.POWER_STATE.OFF])
+            elif command == "source":
+                src = args[0].upper()
+                await mdc.input_source(display_id, [src])
+            elif command == "status":
+                return await mdc.status(display_id)
+            else:
+                raise ValueError(f"Comando non riconosciuto: {command}")
+    except Exception as e:
+        logger.error(f"Errore comando MDC ({command}): {e}")
+        raise
 
 # =====================================================================
 # CONFIGURAZIONE
@@ -143,88 +164,56 @@ class DisplayController:
         return None
     
     def power_on(self):
-        """Accendi display"""
         try:
-            display = self.connect()
-            if not display:
-                raise Exception("Impossibile connettersi al display")
-            
-            display.power(True)
+            asyncio.run(mdc_command(self.ip, 0, "power_on"))
             self.status['power'] = 'on'
             self.status['last_command'] = 'power_on'
             self.status['last_check'] = datetime.now().isoformat()
-            self.retry_count = 0
-            
-            logger.info("Display acceso con successo")
+            logger.info("Display acceso (via samsung-mdc)")
             broadcast_status_update()
             return True
-            
         except Exception as e:
             logger.error(f"Errore accensione display: {e}")
             self.status['error_count'] += 1
             return False
     
     def power_off(self):
-        """Spegni display"""
         try:
-            display = self.connect()
-            if not display:
-                raise Exception("Impossibile connettersi al display")
-            
-            display.power(False)
+            asyncio.run(mdc_command(self.ip, 0, "power_off"))
             self.status['power'] = 'off'
             self.status['last_command'] = 'power_off'
             self.status['last_check'] = datetime.now().isoformat()
-            self.retry_count = 0
-            
-            logger.info("Display spento con successo")
+            logger.info("Display spento (via samsung-mdc)")
             broadcast_status_update()
             return True
-            
         except Exception as e:
             logger.error(f"Errore spegnimento display: {e}")
             self.status['error_count'] += 1
             return False
+
     
     def set_source(self, source):
-        """Cambia sorgente input"""
         try:
-            display = self.connect()
-            if not display:
-                raise Exception("Impossibile connettersi al display")
-            
-            display.source(source)
+            asyncio.run(mdc_command(self.ip, 0, "source", source))
             self.status['source'] = source
             self.status['last_command'] = f'set_source_{source}'
             self.status['last_check'] = datetime.now().isoformat()
-            
-            logger.info(f"Sorgente cambiata a {source}")
+            logger.info(f"Sorgente cambiata a {source} (via samsung-mdc)")
             broadcast_status_update()
             return True
-            
         except Exception as e:
             logger.error(f"Errore cambio sorgente: {e}")
             self.status['error_count'] += 1
             return False
+
     
     def check_status(self):
-        """Verifica stato attuale del display"""
         try:
-            display = self.connect()
-            if not display:
-                self.status['power'] = 'unreachable'
-                self.status['last_check'] = datetime.now().isoformat()
-                broadcast_status_update()
-                return False
-            
-            power_status = display.get_power_status()
-            self.status['power'] = power_status
+            result = asyncio.run(mdc_command(self.ip, 0, "status"))
+            self.status['power'] = str(result)
             self.status['last_check'] = datetime.now().isoformat()
-            self.retry_count = 0
-            
             broadcast_status_update()
             return True
-            
         except Exception as e:
             logger.error(f"Errore verifica stato: {e}")
             self.status['power'] = 'error'
@@ -232,6 +221,7 @@ class DisplayController:
             self.status['error_count'] += 1
             broadcast_status_update()
             return False
+
     
     def watchdog(self):
         """Verifica e recovery automatico"""
