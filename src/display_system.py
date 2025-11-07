@@ -1468,42 +1468,48 @@ DASHBOARD_HTML = """
 
 if __name__ == '__main__':
     print("=" * 70)
-    print("🖥️  DISPLAY CONTROL SYSTEM")
+    print("🖥️  DISPLAY CONTROL SYSTEM (DEBUG MODE)")
     print("=" * 70)
-    print(f"Display: {CONFIG['display']['name']} ({CONFIG['display']['ip']})")
-    print(f"Location: {CONFIG['display']['location']}")
-    print(f"Schedule: {'Enabled' if CONFIG['schedule']['enabled'] else 'Disabled'}")
-    print(f"Watchdog: {'Enabled' if CONFIG['watchdog']['enabled'] else 'Disabled'}")
-    print(f"Telegram: {'Enabled' if CONFIG['notifications']['telegram']['enabled'] else 'Disabled'}")
-    print(f"Email: {'Enabled' if CONFIG['notifications']['email']['enabled'] else 'Disabled'}")
-    print("=" * 70)
-    print(f"\nDefault Login: admin / admin123")
-    print(f"Server starting on: http://0.0.0.0:5000")
-    print(f"Access via Tailscale: http://[TAILSCALE_IP]:5000")
-    print("\nPress Ctrl+C to stop")
-    print("=" * 70)
-    
-    # Setup scheduler
-    setup_scheduler()
-    
-    # Start background threads
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-    logger.info("Scheduler thread started")
-    
-    watchdog_thread = threading.Thread(target=run_watchdog, daemon=True)
-    watchdog_thread.start()
-    logger.info("Watchdog thread started")
-    
-    # Check initial display status
-    display_controller.check_status()
-    
-    # Start Flask-SocketIO server
+
     try:
+        print("→ Lettura configurazione...")
+        print(f"Display: {CONFIG['display']['name']} ({CONFIG['display']['ip']})")
+        print(f"Location: {CONFIG['display']['location']}")
+        print(f"Schedule: {'Enabled' if CONFIG['schedule']['enabled'] else 'Disabled'}")
+        print(f"Watchdog: {'Enabled' if CONFIG['watchdog']['enabled'] else 'Disabled'}")
+        print(f"Telegram: {'Enabled' if CONFIG['notifications']['telegram']['enabled'] else 'Disabled'}")
+        print(f"Email: {'Enabled' if CONFIG['notifications']['email']['enabled'] else 'Disabled'}")
+
+        print("\n→ Setup scheduler...")
+        setup_scheduler()
+        print("✅ Scheduler configurato")
+
+        print("\n→ Avvio thread scheduler...")
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        print("✅ Thread scheduler avviato")
+
+        print("\n→ Avvio thread watchdog...")
+        watchdog_thread = threading.Thread(target=run_watchdog, daemon=True)
+        watchdog_thread.start()
+        print("✅ Thread watchdog avviato")
+
+        print("\n→ Verifica stato iniziale display...")
+        display_controller.check_status()
+        print("✅ Stato iniziale controllato")
+
+        print("\n→ Avvio server Flask-SocketIO...")
+        print(f"Server starting on: http://0.0.0.0:5000")
+        print(f"Access via Tailscale: http://[TAILSCALE_IP]:5000\n")
+        print("Premi CTRL+C per interrompere.")
+        print("=" * 70)
+
         socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
-    except KeyboardInterrupt:
-        print("\n\nShutting down gracefully...")
-        logger.info("Server stopped by user")
+
     except Exception as e:
-        logger.critical(f"Server error: {e}")
-        raise
+        print("❌ ERRORE FATALE:", e)
+        import traceback
+        traceback.print_exc()
+
+    finally:
+        print("\n🔚 Script terminato.")
