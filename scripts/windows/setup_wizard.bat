@@ -17,7 +17,7 @@ echo ======================================
 echo   STEP 1/6: Python Check
 echo ======================================
 echo.
-python --version >nul 2>&1
+py --version >nul 2>&1
 if %errorlevel%==0 (
     echo Python found:
     python --version
