@@ -182,33 +182,102 @@ class DisplayController:
         }
         self.retry_count = 0
         self.max_retry = CONFIG['watchdog']['max_retry']
+
+        # ===== NUOVO =====
+        self.last_successful_connection = None
+        self.consecutive_failures = 0
+        self.last_power_on_attempt = None
+        self.power_on_retry_count = 0
+        # =================
         
-    def connect(self, retries=3):
-        """Connessione al display con retry"""
+    def connect(self, retries=3, timeout=5):
+        """Connessione al display con retry migliorato"""
+        if not MDC_AVAILABLE:
+            logger.error("samsung-mdc non disponibile")
+            return None
+        
         for i in range(retries):
             try:
                 display = MDC(self.ip, verbose=False)
+                # Test connessione con get_power_status
+                _ = display.get_power_status()
+                
+                self.last_successful_connection = datetime.now()
+                self.consecutive_failures = 0
                 return display
+                
             except Exception as e:
+                self.consecutive_failures += 1
                 logger.warning(f"Tentativo connessione {i+1}/{retries} fallito: {e}")
                 if i < retries - 1:
-                    time.sleep(2)
+                    time.sleep(3)  # Aumentato da 2 a 3 secondi
+        
+        logger.error(f"Connessione fallita dopo {retries} tentativi")
         return None
     
-    def power_on(self):
+    def power_on(self, force_wake=False):
+        """
+        Accendi display
+        
+        Args:
+            force_wake (bool): Se True, usa metodi aggressivi per svegliare display
+        """
         try:
-            #asyncio.run(mdc_command(self.ip, 0, "power_on"))
-            run_async(mdc_command(self.ip, 0, "power_on"))
+            # ===== NUOVO: Wake on LAN attempt =====
+            if force_wake:
+                logger.info("Tentativo wake forzato display...")
+                # Invia più comandi in rapida successione
+                for attempt in range(3):
+                    try:
+                        display = MDC(self.ip, verbose=False)
+                        display.power(True)
+                        time.sleep(1)
+                    except:
+                        pass
+                time.sleep(5)  # Attesa dopo wake multipli
+            # =====================================
+            
+            display = self.connect(retries=5)  # Più tentativi
+            if not display:
+                # Display potrebbe essere spento, proviamo comunque
+                logger.warning("Display non risponde, tentativo blind power on...")
+                try:
+                    # Connessione blind (senza check)
+                    display = MDC(self.ip, verbose=False)
+                    display.power(True)
+                    time.sleep(10)  # Attesa maggiore per boot display
+                    
+                    # Retry connessione dopo boot
+                    display = self.connect(retries=5)
+                    if display:
+                        logger.info("Display acceso dopo blind command")
+                    else:
+                        raise Exception("Display non risponde dopo blind power on")
+                except Exception as e:
+                    raise Exception(f"Impossibile accendere display: {e}")
+            else:
+                # Display risponde, comando normale
+                display.power(True)
+                time.sleep(3)
+            
             self.status['power'] = 'on'
             self.status['last_command'] = 'power_on'
             self.status['last_check'] = datetime.now().isoformat()
-            logger.info("Display acceso (via samsung-mdc)")
+            self.retry_count = 0
+            self.power_on_retry_count = 0
+            self.last_power_on_attempt = datetime.now()
+            
+            logger.info("✅ Display acceso con successo")
             broadcast_status_update()
             return True
+            
         except Exception as e:
-            logger.error(f"Errore accensione display: {e}")
+            logger.error(f"❌ Errore accensione display: {e}")
             self.status['error_count'] += 1
+            self.power_on_retry_count += 1
+            broadcast_status_update()
             return False
+
     
     def power_off(self):
         try:
@@ -243,57 +312,201 @@ class DisplayController:
 
     
     def check_status(self):
+        """Verifica stato attuale del display"""
         try:
-            #result = asyncio.run(mdc_command(self.ip, 0, "status"))
-            result = run_async(mdc_command(self.ip, 0, "status"))
-            self.status['power'] = str(result)
-            self.status['last_check'] = datetime.now().isoformat()
-            broadcast_status_update()
-            return True
+            display = self.connect()
+            if not display:
+                # Non riusciamo a connetterci
+                logger.warning("Display non raggiungibile via rete")
+                self.status['power'] = 'unreachable'
+                self.status['last_check'] = datetime.now().isoformat()
+                broadcast_status_update()
+                return False
+            
+            try:
+                power_status = display.get_power_status()
+                
+                # ===== NUOVO: Normalizza risposta =====
+                # Samsung MDC può tornare vari stati
+                if power_status in ['on', 'On', 'ON', '1', 1, True]:
+                    self.status['power'] = 'on'
+                elif power_status in ['off', 'Off', 'OFF', '0', 0, False]:
+                    self.status['power'] = 'off'
+                else:
+                    self.status['power'] = str(power_status).lower()
+                # ======================================
+                
+                self.status['last_check'] = datetime.now().isoformat()
+                self.retry_count = 0
+                
+                logger.info(f"Status check: power={self.status['power']}")
+                broadcast_status_update()
+                return True
+                
+            except Exception as e:
+                # Connesso ma errore nel comando
+                logger.error(f"Errore lettura stato: {e}")
+                self.status['power'] = 'error'
+                self.status['last_check'] = datetime.now().isoformat()
+                self.status['error_count'] += 1
+                broadcast_status_update()
+                return False
+            
         except Exception as e:
-            logger.error(f"Errore verifica stato: {e}")
+            logger.error(f"Errore check_status: {e}")
             self.status['power'] = 'error'
             self.status['last_check'] = datetime.now().isoformat()
             self.status['error_count'] += 1
             broadcast_status_update()
-            return Fals
+            return False
 
     
     def watchdog(self):
-        """Verifica e recovery automatico"""
-        logger.info("Watchdog check...")
+        """
+        Verifica e recovery automatico
         
-        if not self.check_status():
-            logger.warning("Display non raggiungibile")
+        Flusso corretto:
+        1. Check se display dovrebbe essere acceso (schedule)
+        2. Check stato effettivo display
+        3. Se mismatch → azioni correttive
+        4. NO RESTART SERVER (mai!)
+        """
+        logger.info("🔍 Watchdog check iniziato...")
+        
+        # ===== STEP 1: Determina stato desiderato =====
+        should_be_on = is_in_schedule()
+        logger.info(f"Schedule status: display dovrebbe essere {'ON' if should_be_on else 'OFF'}")
+        
+        # ===== STEP 2: Check stato effettivo =====
+        status_ok = self.check_status()
+        current_power = self.status['power']
+        logger.info(f"Display status: power={current_power}")
+        
+        # ===== STEP 3: Logica decisionale =====
+        
+        # Caso 1: Display non raggiungibile
+        if current_power == 'unreachable':
+            logger.warning("⚠️ Display non raggiungibile via rete")
             self.retry_count += 1
             
             if self.retry_count >= self.max_retry:
-                logger.critical(f"Max retry ({self.max_retry}) raggiunto!")
+                logger.critical(f"❌ ALERT: Display non raggiungibile dopo {self.max_retry} tentativi!")
                 send_notification(
                     "⚠️ ALERT: Display Non Raggiungibile",
-                    f"Il display non risponde dopo {self.max_retry} tentativi. Intervento richiesto."
+                    f"Il display {CONFIG['display']['name']} non risponde.\n"
+                    f"IP: {self.ip}\n"
+                    f"Tentativi: {self.retry_count}\n\n"
+                    f"Verifica:\n"
+                    f"- Display acceso fisicamente\n"
+                    f"- Cavo di rete collegato\n"
+                    f"- IP corretto in config"
                 )
-                self.retry_count = 0
+                self.retry_count = 0  # Reset per non spammare alert
                 return False
             
-            # Tentativo power cycle
-            logger.warning(f"Tentativo recovery {self.retry_count}/{self.max_retry}")
-            time.sleep(5)
-            self.power_off()
-            time.sleep(10)
-            self.power_on()
-            time.sleep(5)
-            self.set_source(CONFIG['schedule']['source_on_startup'])
-            
-        elif self.status['power'] == 'off':
-            # Display spento quando dovrebbe essere acceso
-            if is_in_schedule():
-                logger.warning("Display spento durante orario schedulato - riaccensione")
-                self.power_on()
-                time.sleep(3)
-                self.set_source(CONFIG['schedule']['source_on_startup'])
+            logger.info(f"Retry {self.retry_count}/{self.max_retry} - prossimo check tra {CONFIG['watchdog']['check_interval']}s")
+            return False
         
-        return True
+        # Caso 2: Errore lettura stato
+        elif current_power == 'error':
+            logger.error("❌ Errore nella comunicazione con display")
+            self.retry_count += 1
+            
+            if self.retry_count >= self.max_retry:
+                logger.warning("Tentativo recovery dopo errori ripetuti...")
+                # Non riavviamo il server, proviamo solo power cycle display
+                self._attempt_display_recovery()
+                self.retry_count = 0
+            
+            return False
+        
+        # Caso 3: Display spento ma dovrebbe essere acceso
+        elif current_power == 'off' and should_be_on:
+            logger.warning("⚠️ Display SPENTO ma dovrebbe essere ACCESO (schedule attivo)")
+            
+            # Check se abbiamo già provato recentemente
+            if self.last_power_on_attempt:
+                time_since_last = (datetime.now() - self.last_power_on_attempt).total_seconds()
+                if time_since_last < 60:  # Meno di 1 minuto fa
+                    logger.info(f"Power ON tentato {int(time_since_last)}s fa, attendo prima di ritentare")
+                    return True
+            
+            logger.info("🔄 Tentativo accensione display...")
+            success = self.power_on(force_wake=True)
+            
+            if success:
+                # Aspetta e imposta source
+                time.sleep(5)
+                source = CONFIG['schedule'].get('source_on_startup', 'hdmi1')
+                logger.info(f"Impostazione source: {source}")
+                self.set_source(source)
+                
+                send_notification(
+                    "✅ Display Acceso",
+                    f"Watchdog ha acceso il display {CONFIG['display']['name']}\n"
+                    f"Motivo: Display spento durante orario schedule"
+                )
+                return True
+            else:
+                logger.error("❌ Accensione display fallita")
+                self.retry_count += 1
+                return False
+        
+        # Caso 4: Display acceso ma dovrebbe essere spento
+        elif current_power == 'on' and not should_be_on:
+            logger.info("ℹ️ Display ACCESO ma dovrebbe essere SPENTO (fuori schedule)")
+            # Non spegniamo automaticamente, potrebbe essere voluto
+            # Lo schedule normale si occuperà dello spegnimento
+            return True
+        
+        # Caso 5: Tutto OK
+        else:
+            logger.info(f"✅ Display OK - power={current_power}, schedule={'ON' if should_be_on else 'OFF'}")
+            self.retry_count = 0
+            return True
+    
+    def _attempt_display_recovery(self):
+        """
+        Tentativo recovery display (NON server!)
+        """
+        logger.warning("🔄 Tentativo recovery display...")
+        
+        try:
+            # Step 1: Power OFF
+            logger.info("Step 1: Power OFF")
+            display = MDC(self.ip, verbose=False)
+            display.power(False)
+            time.sleep(10)
+            
+            # Step 2: Power ON
+            logger.info("Step 2: Power ON")
+            display.power(True)
+            time.sleep(15)
+            
+            # Step 3: Set Source
+            logger.info("Step 3: Set Source")
+            source = CONFIG['schedule'].get('source_on_startup', 'hdmi1')
+            display.source(source)
+            time.sleep(3)
+            
+            # Step 4: Verify
+            logger.info("Step 4: Verifica stato")
+            self.check_status()
+            
+            logger.info("✅ Recovery completato")
+            send_notification(
+                "🔄 Display Recovery",
+                f"Watchdog ha eseguito power cycle su {CONFIG['display']['name']}"
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Recovery fallito: {e}")
+            send_notification(
+                "❌ Recovery Fallito",
+                f"Impossibile recuperare display {CONFIG['display']['name']}\n"
+                f"Errore: {e}\n\n"
+                f"Intervento manuale richiesto"
+            )
 
 # Istanza globale controller
 display_controller = DisplayController(CONFIG['display']['ip'])
@@ -304,39 +517,120 @@ display_controller = DisplayController(CONFIG['display']['ip'])
 
 def is_in_schedule():
     """Verifica se l'ora corrente è dentro lo schedule"""
-    if not CONFIG['schedule']['enabled']:
+    if not CONFIG['schedule'].get('enabled', False):
         return False
     
     now = datetime.now()
+    
+    # ===== FIX: Usa lowercase per confronto =====
     day_name = now.strftime('%A').lower()
     
-    if day_name not in CONFIG['schedule']['days']:
+    # Normalizza giorni in config (potrebbero essere maiuscoli)
+    schedule_days = [d.lower() for d in CONFIG['schedule'].get('days', [])]
+    
+    if day_name not in schedule_days:
+        logger.debug(f"Oggi è {day_name}, non in schedule ({schedule_days})")
         return False
+    # =============================================
     
     current_time = now.time()
-    on_time = datetime.strptime(CONFIG['schedule']['power_on'], '%H:%M').time()
-    off_time = datetime.strptime(CONFIG['schedule']['power_off'], '%H:%M').time()
-    
-    return on_time <= current_time <= off_time
+    try:
+        on_time = datetime.strptime(CONFIG['schedule']['power_on'], '%H:%M').time()
+        off_time = datetime.strptime(CONFIG['schedule']['power_off'], '%H:%M').time()
+        
+        in_schedule = on_time <= current_time <= off_time
+        
+        if in_schedule:
+            logger.debug(f"IN schedule: {current_time} tra {on_time} e {off_time}")
+        else:
+            logger.debug(f"OUT schedule: {current_time} fuori da {on_time}-{off_time}")
+        
+        return in_schedule
+        
+    except Exception as e:
+        logger.error(f"Errore parsing orari schedule: {e}")
+        return False
 
 def scheduled_power_on():
     """Accensione schedulata"""
-    logger.info("Esecuzione accensione schedulata")
-    if display_controller.power_on():
+    logger.info("⏰ SCHEDULE: Esecuzione accensione schedulata")
+    
+    if not display_controller:
+        logger.error("Display controller non inizializzato")
+        return
+    
+    # Check se già acceso
+    display_controller.check_status()
+    if display_controller.status['power'] == 'on':
+        logger.info("Display già acceso, skip")
+        return
+    
+    # Tentativo accensione con force wake
+    logger.info("Invio comando accensione...")
+    success = display_controller.power_on(force_wake=True)
+    
+    if success:
+        # Attendi boot display
+        time.sleep(10)
+        
+        # Imposta source
+        source = CONFIG['schedule'].get('source_on_startup', 'hdmi1')
+        logger.info(f"Impostazione source: {source}")
+        display_controller.set_source(source)
+        
+        # Verifica
         time.sleep(3)
-        display_controller.set_source(CONFIG['schedule']['source_on_startup'])
-        send_notification("✅ Display Acceso", "Accensione schedulata eseguita con successo")
+        display_controller.check_status()
+        
+        if display_controller.status['power'] == 'on':
+            logger.info("✅ Accensione schedulata completata")
+            send_notification(
+                "✅ Display Acceso (Schedule)",
+                f"{CONFIG['display']['name']} acceso alle {datetime.now().strftime('%H:%M')}\n"
+                f"Source: {source}"
+            )
+        else:
+            logger.warning("⚠️ Accensione schedulata: display non conferma stato ON")
+    else:
+        logger.error("❌ Accensione schedulata fallita")
+        send_notification(
+            "❌ Accensione Schedulata Fallita",
+            f"Impossibile accendere {CONFIG['display']['name']}\n"
+            f"Ora: {datetime.now().strftime('%H:%M')}\n\n"
+            f"Verifica display e connessione"
+        )
 
 def scheduled_power_off():
     """Spegnimento schedulato"""
-    logger.info("Esecuzione spegnimento schedulato")
-    if display_controller.power_off():
-        send_notification("✅ Display Spento", "Spegnimento schedulato eseguito con successo")
+    logger.info("⏰ SCHEDULE: Esecuzione spegnimento schedulato")
+    
+    if not display_controller:
+        logger.error("Display controller non inizializzato")
+        return
+    
+    # Check se già spento
+    display_controller.check_status()
+    if display_controller.status['power'] == 'off':
+        logger.info("Display già spento, skip")
+        return
+    
+    # Spegnimento
+    logger.info("Invio comando spegnimento...")
+    success = display_controller.power_off()
+    
+    if success:
+        logger.info("✅ Spegnimento schedulato completato")
+        send_notification(
+            "✅ Display Spento (Schedule)",
+            f"{CONFIG['display']['name']} spento alle {datetime.now().strftime('%H:%M')}"
+        )
+    else:
+        logger.error("❌ Spegnimento schedulato fallito")
 
 def setup_scheduler():
     """Configura scheduler"""
-    if not CONFIG['schedule']['enabled']:
-        logger.info("Scheduler disabilitato")
+    if not CONFIG['schedule'].get('enabled', False):
+        logger.info("⏸️ Scheduler disabilitato in config")
         return
     
     schedule.clear()
@@ -351,13 +645,22 @@ def setup_scheduler():
         'sunday': schedule.every().sunday
     }
     
-    for day in CONFIG['schedule']['days']:
-        if day in days_map:
-            days_map[day].at(CONFIG['schedule']['power_on']).do(scheduled_power_on)
-            days_map[day].at(CONFIG['schedule']['power_off']).do(scheduled_power_off)
+    scheduled_days = []
+    for day in CONFIG['schedule'].get('days', []):
+        day_lower = day.lower()
+        if day_lower in days_map:
+            days_map[day_lower].at(CONFIG['schedule']['power_on']).do(scheduled_power_on)
+            days_map[day_lower].at(CONFIG['schedule']['power_off']).do(scheduled_power_off)
+            scheduled_days.append(day_lower)
     
-    logger.info(f"Scheduler configurato: ON={CONFIG['schedule']['power_on']}, OFF={CONFIG['schedule']['power_off']}")
-
+    logger.info("=" * 50)
+    logger.info("⏰ SCHEDULER CONFIGURATO")
+    logger.info(f"   Power ON:  {CONFIG['schedule']['power_on']}")
+    logger.info(f"   Power OFF: {CONFIG['schedule']['power_off']}")
+    logger.info(f"   Giorni: {', '.join(scheduled_days)}")
+    logger.info(f"   Source: {CONFIG['schedule'].get('source_on_startup', 'hdmi1')}")
+    logger.info("=" * 50)
+    
 def run_scheduler():
     """Thread scheduler"""
     while True:
