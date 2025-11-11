@@ -33,24 +33,56 @@ except ImportError:
     print("ERRORE: Installa samsung-mdc con: pip install samsung-mdc")
     exit(1)
 
+def run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result()
+    else:
+        return asyncio.run(coro)
+
 async def mdc_command(ip, display_id, command, *args):
-    """Esegue un comando MDC asincrono."""
+    """
+    Versione di debug: mostra quale comando arriva e cosa prova a inviare.
+    """
+    print("=" * 60)
+    print(f"[MDC DEBUG] → Command received: {command}")
+    print(f"[MDC DEBUG] → Target IP: {ip}, Display ID: {display_id}")
+    print(f"[MDC DEBUG] → Extra args: {args}")
+    print("=" * 60)
+
     try:
         async with MDC(ip, verbose=True) as mdc:
             if command == "power_on":
-                await mdc.power(display_id, [MDC.power.POWER_STATE.ON])
+                print("[MDC DEBUG] Would send: POWER ON")
+                await mdc.send(0x11, display_id, [1])
+                #await asyncio.sleep(0.3)
+
             elif command == "power_off":
-                await mdc.power(display_id, [MDC.power.POWER_STATE.OFF])
+                print("[MDC DEBUG] Would send: POWER OFF")
+                await mdc.send(0x11, display_id, [0])
+                #await asyncio.sleep(0.3)
+
             elif command == "source":
                 src = args[0].upper()
+                print(f"[MDC DEBUG] Would send: CHANGE SOURCE → {src}")
                 await mdc.input_source(display_id, [src])
+
             elif command == "status":
-                return await mdc.status(display_id)
+                print("[MDC DEBUG] Would send: STATUS REQUEST")
+                result = await mdc.status(display_id)
+                print(f"[MDC DEBUG] Status result: {result}")
+                return result
+
             else:
-                raise ValueError(f"Comando non riconosciuto: {command}")
+                print(f"[MDC DEBUG] ❌ Unknown command: {command}")
+
     except Exception as e:
-        logger.error(f"Errore comando MDC ({command}): {e}")
-        raise
+        print(f"[MDC DEBUG] ❌ Exception while executing {command}: {e}")
 
 # =====================================================================
 # CONFIGURAZIONE
@@ -165,7 +197,8 @@ class DisplayController:
     
     def power_on(self):
         try:
-            asyncio.run(mdc_command(self.ip, 0, "power_on"))
+            #asyncio.run(mdc_command(self.ip, 0, "power_on"))
+            run_async(mdc_command(self.ip, 0, "power_on"))
             self.status['power'] = 'on'
             self.status['last_command'] = 'power_on'
             self.status['last_check'] = datetime.now().isoformat()
@@ -179,7 +212,8 @@ class DisplayController:
     
     def power_off(self):
         try:
-            asyncio.run(mdc_command(self.ip, 0, "power_off"))
+            #asyncio.run(mdc_command(self.ip, 0, "power_off"))
+            run_async(mdc_command(self.ip, 0, "power_off"))
             self.status['power'] = 'off'
             self.status['last_command'] = 'power_off'
             self.status['last_check'] = datetime.now().isoformat()
@@ -194,7 +228,8 @@ class DisplayController:
     
     def set_source(self, source):
         try:
-            asyncio.run(mdc_command(self.ip, 0, "source", source))
+            #asyncio.run(mdc_command(self.ip, 0, "source", source))
+            run_async(mdc_command(self.ip, 0, "source", source))
             self.status['source'] = source
             self.status['last_command'] = f'set_source_{source}'
             self.status['last_check'] = datetime.now().isoformat()
@@ -209,7 +244,8 @@ class DisplayController:
     
     def check_status(self):
         try:
-            result = asyncio.run(mdc_command(self.ip, 0, "status"))
+            #result = asyncio.run(mdc_command(self.ip, 0, "status"))
+            result = run_async(mdc_command(self.ip, 0, "status"))
             self.status['power'] = str(result)
             self.status['last_check'] = datetime.now().isoformat()
             broadcast_status_update()
@@ -220,7 +256,7 @@ class DisplayController:
             self.status['last_check'] = datetime.now().isoformat()
             self.status['error_count'] += 1
             broadcast_status_update()
-            return False
+            return Fals
 
     
     def watchdog(self):
