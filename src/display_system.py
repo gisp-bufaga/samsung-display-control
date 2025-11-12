@@ -17,6 +17,7 @@ import hashlib
 import secrets
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 import threading
 import time
@@ -92,16 +93,65 @@ CONFIG_FILE = 'config.json'
 LOG_DIR = 'logs'
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, 'display.log')),
-        logging.StreamHandler()
-    ]
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+LOG_DIR = os.path.join(PROJECT_ROOT, 'logs')
+
+# Crea directory logs se non esiste
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# File log
+LOG_FILE = os.path.join(LOG_DIR, 'display.log')
+
+# Formatter con emoji e info dettagliate
+log_formatter = logging.Formatter(
+    fmt='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+# Handler per file con rotazione automatica
+# Max 10MB per file, tiene 5 file di backup
+file_handler = RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=10*1024*1024,  # 10 MB
+    backupCount=5,
+    encoding='utf-8'
+)
+file_handler.setFormatter(log_formatter)
+file_handler.setLevel(logging.DEBUG)  # File cattura tutto
+
+# Handler per console (meno verboso)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+console_handler.setLevel(logging.INFO)  # Console solo INFO e superiori
+
+# Logger principale
 logger = logging.getLogger('DisplayControl')
+logger.setLevel(logging.DEBUG)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Disabilita log troppo verbosi di librerie esterne
+logging.getLogger('werkzeug').setLevel(logging.WARNING)  # Flask
+logging.getLogger('engineio').setLevel(logging.WARNING)  # SocketIO
+logging.getLogger('socketio').setLevel(logging.WARNING)
+
+# Log di avvio
+logger.info("=" * 70)
+logger.info("🖥️  DISPLAY CONTROL SYSTEM - AVVIO")
+logger.info("=" * 70)
+logger.info(f"📁 Log directory: {LOG_DIR}")
+logger.info(f"📄 Log file: {LOG_FILE}")
+
+# Test scrittura log
+try:
+    with open(LOG_FILE, 'a', encoding='utf-8') as f:
+        f.write(f"\n{'='*70}\n")
+        f.write(f"Session started: {logging.Formatter().formatTime(logging.LogRecord('', 0, '', 0, '', (), None))}\n")
+        f.write(f"{'='*70}\n\n")
+    logger.info("✅ Log file accessibile e scrivibile")
+except Exception as e:
+    logger.error(f"❌ Errore accesso log file: {e}")
 
 # =====================================================================
 # CONFIGURAZIONE DEFAULT
